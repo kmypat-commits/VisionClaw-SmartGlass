@@ -275,3 +275,4 @@ def get_today_nutrition_summary() -> dict:
         "today_carbs_g": round(total_c, 1),
         "meals": today_entries,
     }
+
