@@ -1,0 +1,54 @@
+name: Build iOS IPA (Unsigned for Sideloadly / AltStore)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare Secrets.swift
+        working-directory: samples/CameraAccess
+        run: |
+          if [ ! -f CameraAccess/Secrets.swift ]; then
+            cp CameraAccess/Secrets.swift.example CameraAccess/Secrets.swift
+          fi
+
+      - name: Resolve Swift Package Dependencies
+        working-directory: samples/CameraAccess
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project CameraAccess.xcodeproj \
+            -scheme CameraAccess
+
+      - name: Build Unsigned iOS App
+        working-directory: samples/CameraAccess
+        run: |
+          xcodebuild build \
+            -project CameraAccess.xcodeproj \
+            -scheme CameraAccess \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package .ipa
+        working-directory: samples/CameraAccess
+        run: |
+          mkdir -p Payload
+          cp -r build/Build/Products/Release-iphoneos/CameraAccess.app Payload/
+          zip -r9 VisionClaw-unsigned.ipa Payload
+
+      - name: Upload VisionClaw.ipa Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionClaw-iOS-IPA
+          path: samples/CameraAccess/VisionClaw-unsigned.ipa
+          retention-days: 30

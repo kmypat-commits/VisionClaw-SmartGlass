@@ -48,12 +48,24 @@ from livekit.agents.voice import VoiceActivityVideoSampler
 from livekit.plugins import google, openai
 from openai.types.beta.realtime.session import TurnDetection
 
+import project_manager
+
 logger = logging.getLogger("visionclaw-agent")
 
-INSTRUCTIONS = """You are VisionClaw, an AI assistant the user talks to while showing you the
-world through their phone camera or smart glasses. Keep responses concise and natural.
+INSTRUCTIONS = """You are VisionClaw, a super-smart personal AI assistant the user talks to while showing you the
+world through their Ray-Ban Meta smart glasses or phone camera. Keep responses concise and natural.
+Always reply in the language the user speaks to you (default to Russian when the user speaks Russian).
 
 You can see live video. Answer visual questions directly from what you see.
+
+PROJECTS & NUTRITION SYSTEM (Local Workspace on D:\\agents\\smartglass\\projects):
+- The user has personal Projects (like Claude Projects / Harmony) stored locally on their PC:
+  1. 'nutrition' (Здоровье и Питание — calorie counting, daily macro tracking, meal plans)
+  2. 'assistant' (Личный Ассистент — tasks, ideas, camera notes)
+  3. 'work' (Работа и Проекты — PDF/markdown/text documents and project knowledge base)
+  4. 'translator' (Языки и Переводчик — live menu/sign translation, vocabulary saving)
+- Use `list_projects` to see all projects, `switch_project` to switch the active project, `get_project_context` to read files/materials in a project, and `save_to_project` to save notes, summaries, or extracted camera text into a project file.
+- CALORIES & DIET: When the user asks to count calories on their plate or in food shown on camera, estimate the dish, weight in grams, calories, protein, fat, and carbs from the live video feed, and call `log_meal_calories` to record it into their daily food diary (or `get_today_nutrition` to check remaining calories and compose a meal plan).
 
 The browse tool is your computer-use agent: it drives a real web browser on a live site, both
 to read and to ACT. Use it for anything that happens on a website -- shopping (add an item to a
@@ -617,6 +629,110 @@ async def delete_note(ctx: RunContext[Userdata], match: str, tag: str | None = N
     ctx.userdata.tracer.emit("agent_action", tool="delete_note", match=match, tag=tag, deleted=deleted)
     await _push_notes_card(ctx, tag)
     return f"Removed: {deleted}. The updated list card is already on screen; confirm briefly."
+
+
+@function_tool
+async def list_projects(ctx: RunContext[Userdata]) -> str:
+    """List all personal projects (workspaces) on the user's PC and show which one is currently active."""
+    projects = project_manager.list_all_projects()
+    lines = [
+        f"- {p['id']} ({p['title']}) [Активен: {p['active']}] Файлы: {p['files']}"
+        for p in projects
+    ]
+    return "Доступные проекты:\n" + "\n".join(lines)
+
+
+@function_tool
+async def switch_project(ctx: RunContext[Userdata], project_name: str) -> str:
+    """Switch the active project (e.g. 'питание', 'работа', 'ассистент', 'переводчик', or a new project name)
+    and return its materials and context."""
+    resolved = project_manager.set_active_project(project_name)
+    materials = project_manager.read_project_materials(resolved)
+    if ctx.userdata.room is not None:
+        try:
+            await _publish_card(
+                ctx.userdata.room,
+                {
+                    "uuid": "project-card",
+                    "version": 1,
+                    "type": "info",
+                    "title": f"Проект: {resolved}",
+                    "body": f"Активный проект переключен на '{resolved}'. Материалы загружены.",
+                    "fallback_text": f"Проект: {resolved}",
+                },
+            )
+        except Exception:
+            pass
+    return f"Переключено на проект '{resolved}'. Контекст проекта:\n{materials}"
+
+
+@function_tool
+async def get_project_context(
+    ctx: RunContext[Userdata], project_name: str | None = None, search_query: str | None = None
+) -> str:
+    """Read all files, PDFs, notes, and materials inside the specified project (or the active project if omitted)."""
+    return project_manager.read_project_materials(project_name, search_query)
+
+
+@function_tool
+async def save_to_project(
+    ctx: RunContext[Userdata], filename: str, content: str, project_name: str | None = None
+) -> str:
+    """Save a note, summary, vocabulary word, or information seen on camera into a file inside the user's project."""
+    return project_manager.save_material_to_project(filename, content, project_name, append=True)
+
+
+@function_tool
+async def log_meal_calories(
+    ctx: RunContext[Userdata],
+    meal_name: str,
+    calories: int,
+    protein_g: float = 0,
+    fat_g: float = 0,
+    carbs_g: float = 0,
+    weight_g: float = 0,
+    notes: str = "",
+) -> str:
+    """Log a meal or food item (seen through the glasses camera or described by voice) with its estimated
+    calories and macros (protein, fat, carbs in grams, weight in grams) into the daily nutrition diary."""
+    summary = project_manager.log_meal_entry(
+        meal_name=meal_name,
+        calories=calories,
+        protein_g=protein_g,
+        fat_g=fat_g,
+        carbs_g=carbs_g,
+        weight_g=weight_g,
+        notes=notes,
+    )
+    if ctx.userdata.room is not None:
+        try:
+            await _publish_card(
+                ctx.userdata.room,
+                {
+                    "uuid": "nutrition-card",
+                    "version": 1,
+                    "type": "info",
+                    "title": meal_name,
+                    "value": f"{calories} ккал",
+                    "body": f"За сегодня: {summary['today_total_calories']} / {summary['daily_goal_calories']} ккал (осталось {summary['remaining_calories']} ккал)",
+                    "facts": [
+                        {"label": "Белки", "value": f"{protein_g} г (всего {summary['today_protein_g']} г)"},
+                        {"label": "Жиры", "value": f"{fat_g} г (всего {summary['today_fat_g']} г)"},
+                        {"label": "Углеводы", "value": f"{carbs_g} г (всего {summary['today_carbs_g']} г)"},
+                    ],
+                    "fallback_text": f"{meal_name}: {calories} ккал. Осталось на день: {summary['remaining_calories']} ккал.",
+                },
+            )
+        except Exception:
+            pass
+    return json.dumps(summary, ensure_ascii=False)
+
+
+@function_tool
+async def get_today_nutrition(ctx: RunContext[Userdata]) -> str:
+    """Get today's total calories, macros (protein, fat, carbs), remaining calorie budget, and list of logged meals."""
+    summary = project_manager.get_today_nutrition_summary()
+    return json.dumps(summary, ensure_ascii=False)
 
 
 async def _gateway_browse_start(user_id: str, task: str) -> dict:
@@ -1246,7 +1362,21 @@ async def entrypoint(ctx: JobContext):
     await session.start(
         agent=Agent(
             instructions=INSTRUCTIONS + (ASSISTIVE_INSTRUCTIONS if profile == "assistive" else ""),
-            tools=[execute, browse, quick_search, show_card, save_note, recall_notes, delete_note],
+            tools=[
+                execute,
+                browse,
+                quick_search,
+                show_card,
+                save_note,
+                recall_notes,
+                delete_note,
+                list_projects,
+                switch_project,
+                get_project_context,
+                save_to_project,
+                log_meal_calories,
+                get_today_nutrition,
+            ],
         ),
         room=ctx.room,
         # Video is opt-in (RoomInputOptions.video_enabled defaults to False);

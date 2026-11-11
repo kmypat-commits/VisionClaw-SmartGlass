@@ -113,7 +113,7 @@ final class SettingsManager {
   var intelligenceEngine: IntelligenceEngine {
     get {
       guard let raw = defaults.string(forKey: IntelligenceEngine.defaultsKey),
-            let engine = IntelligenceEngine(rawValue: raw) else { return .openai }
+            let engine = IntelligenceEngine(rawValue: raw) else { return .gemini }
       return engine
     }
     set { defaults.set(newValue.rawValue, forKey: IntelligenceEngine.defaultsKey) }

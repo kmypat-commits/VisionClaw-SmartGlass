@@ -150,6 +150,43 @@ app.post("/v1/chat/completions", async (req, res) => {
     return;
   }
 
+  // Fallback to Gemini API when ANTHROPIC_API_KEY is not configured
+  const hasAnthropic = !!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY.startsWith("sk-ant-not") && !process.env.ANTHROPIC_API_KEY.startsWith("sk-ant-...");
+  if (!hasAnthropic && process.env.GOOGLE_API_KEY) {
+    try {
+      const image = typeof req.body?.image === "string" && req.body.image ? req.body.image : undefined;
+      const parts: Array<Record<string, unknown>> = [{ text: lastUser }];
+      if (image) {
+        parts.push({ inline_data: { mime_type: "image/jpeg", data: image } });
+      }
+      const geminiResp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GOOGLE_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts }] }),
+        },
+      );
+      const geminiJson = (await geminiResp.json()) as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+      };
+      const text = geminiJson.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") || "Готово.";
+      await recordTask(userId, lastUser, text);
+      res.json({
+        id: `chatcmpl-${randomUUID()}`,
+        object: "chat.completion",
+        created: Math.floor(Date.now() / 1000),
+        model: "gemini-2.5-flash",
+        choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }],
+      });
+      return;
+    } catch (err) {
+      console.error("[chat] gemini fallback failed:", err);
+      res.status(502).json({ error: { message: "gemini fallback error" } });
+      return;
+    }
+  }
+
   // ---- streaming path (OpenAI-style SSE chunks) ----
   if (req.body?.stream === true) {
     let sessionId: string;
@@ -436,7 +473,9 @@ app.post("/livekit-token", async (req, res) => {
   // Pre-warm: session creation costs ~3-4s, which on a lazy path lands on the
   // call's first task. Kicking it off now hides the cold start behind call
   // setup and greeting time.
-  void ensureUser(userId).catch((err) => console.warn(`[provision] pre-warm failed for ${userId}:`, err));
+  if (process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY.startsWith("sk-ant-not")) {
+    void ensureUser(userId).catch((err) => console.warn(`[provision] pre-warm failed for ${userId}:`, err));
+  }
   const { AccessToken } = await import("livekit-server-sdk");
   // The engine choice (gemini | openai) rides as participant metadata; the
   // worker reads it when the user joins and picks the realtime model.
