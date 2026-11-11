@@ -233,10 +233,10 @@ final class LiveKitSession: NSObject, ObservableObject {
     if SettingsManager.shared.captureSource == .glasses {
       // Glasses preview is a buffer track fed by pushGlassesFrame; there is
       // no capture device to open.
-      track = LocalVideoTrack.createBufferTrack(name: "glasses-preview", source: .camera)
+      track = await LocalVideoTrack.createBufferTrack(name: "glasses-preview", source: .camera)
       glassesCapturerBox.capturer = track.capturer as? BufferCapturer
     } else {
-      track = LocalVideoTrack.createCameraTrack(
+      track = await LocalVideoTrack.createCameraTrack(
         options: CameraCaptureOptions(position: .back))
       glassesCapturerBox.capturer = nil
     }
@@ -382,7 +382,7 @@ final class LiveKitSession: NSObject, ObservableObject {
           // camera source keeps mute/freeze/agent logic identical.
           // reportStatistics enables the per-second outbound-rtp stats poll so
           // we can log the actual encoded resolution/fps leaving the phone.
-          let track = LocalVideoTrack.createBufferTrack(name: "glasses", source: .camera, reportStatistics: true)
+          let track = await LocalVideoTrack.createBufferTrack(name: "glasses", source: .camera, reportStatistics: true)
           // New track, new frame clock: the deferred publish must wait for a
           // frame on THIS track. A sawFrame left true by the preview track
           // otherwise published this still-empty call track at once, so the

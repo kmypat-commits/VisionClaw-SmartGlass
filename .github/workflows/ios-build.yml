@@ -9,13 +9,6 @@ jobs:
   build-ios:
     runs-on: macos-15
     steps:
-      - name: Select latest Xcode
-        run: |
-          ls -d /Applications/Xcode*.app
-          LATEST_XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -n 1)
-          echo "Selecting $LATEST_XCODE"
-          sudo xcode-select -s "$LATEST_XCODE/Contents/Developer"
-          xcodebuild -version
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -42,7 +35,6 @@ jobs:
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \
-            SWIFT_APPROACHABLE_CONCURRENCY=YES \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO
